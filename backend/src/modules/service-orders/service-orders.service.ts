@@ -49,6 +49,22 @@ export class ServiceOrdersService {
     return this.repo.findOneOrFail({ where: { id }, relations: ['technician'] });
   }
 
+  findByTechnician(companyId: string, technicianId: string, date?: string) {
+    const qb = this.repo
+      .createQueryBuilder('so')
+      .leftJoinAndSelect('so.technician', 'tech')
+      .where('so.company_id = :companyId', { companyId })
+      .andWhere('so.technician_id = :technicianId', { technicianId })
+      .andWhere("so.status NOT IN ('canceled')")
+      .orderBy('so.time_window_start', 'ASC');
+
+    if (date) {
+      qb.andWhere('DATE(so.time_window_start) = :date', { date });
+    }
+
+    return qb.getMany();
+  }
+
   findAll(companyId: string, date?: string) {
     const qb = this.repo
       .createQueryBuilder('so')

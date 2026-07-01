@@ -13,4 +13,10 @@ export class AuthController {
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }
+
+  @Post('technician-login')
+  @ApiOperation({ summary: 'Login do técnico pelo telefone' })
+  technicianLogin(@Body('phone') phone: string) {
+    return this.authService.technicianLogin(phone);
+  }
 }

@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Body, Param,
-  UseGuards, Request, Query,
+  UseGuards, Request, Query, ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -18,6 +18,13 @@ export class ServiceOrdersController {
   @ApiOperation({ summary: 'Criar nova Ordem de Serviço' })
   create(@Request() req: any, @Body() dto: CreateServiceOrderDto) {
     return this.service.create(req.user.companyId, dto);
+  }
+
+  @Get('my')
+  @ApiOperation({ summary: 'OSs do técnico autenticado' })
+  getMyOrders(@Request() req: any, @Query('date') date?: string) {
+    if (!req.user.technicianId) throw new ForbiddenException('Acesso restrito a técnicos');
+    return this.service.findByTechnician(req.user.companyId, req.user.technicianId, date);
   }
 
   @Get()

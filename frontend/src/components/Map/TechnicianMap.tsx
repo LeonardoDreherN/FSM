@@ -61,10 +61,30 @@ export default function TechnicianMap({ technicians, serviceOrders }: Props) {
       });
 
       mapRef.current = L.map(containerRef.current!, {
-        center: [-27.595, -48.548],
+        center: [-15.77, -47.93], // centro do Brasil — será sobrescrito pelo geolocation
         zoom: 12,
         zoomControl: true,
       });
+
+      // Centraliza na localização real do usuário
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            mapRef.current?.setView([pos.coords.latitude, pos.coords.longitude], 13);
+          },
+          () => {
+            // Sem permissão: tenta IP geolocation gratuito
+            fetch('https://ipapi.co/json/')
+              .then(r => r.json())
+              .then(d => {
+                if (d.latitude && d.longitude) {
+                  mapRef.current?.setView([d.latitude, d.longitude], 12);
+                }
+              })
+              .catch(() => {});
+          }
+        );
+      }
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',

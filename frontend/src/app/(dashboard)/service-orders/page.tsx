@@ -1,24 +1,25 @@
-'use client';
-import { useState } from 'react';
+﻿'use client';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { Plus, Search, X, MapPin, Clock, AlertTriangle, CheckCircle2, XCircle, Filter } from 'lucide-react';
 
-const STATUS_LABEL: Record<string, { label: string; color: string }> = {
-  pending:     { label: 'Pendente',        color: '#f59e0b' },
-  routed:      { label: 'Roteirizado',     color: '#3b82f6' },
-  in_transit:  { label: 'Em Trânsito',    color: '#60a5fa' },
-  in_progress: { label: 'Em Atendimento', color: '#a78bfa' },
-  completed:   { label: 'Concluído',      color: '#22c55e' },
-  canceled:    { label: 'Cancelado',      color: '#ef4444' },
+const STATUS_MAP: Record<string, { label: string; color: string; bg: string }> = {
+  pending:     { label: 'Pendente',        color: 'var(--yellow)',  bg: 'var(--yellow-muted)' },
+  routed:      { label: 'Roteirizado',     color: 'var(--blue)',    bg: 'var(--blue-muted)' },
+  in_transit:  { label: 'Em Transito',    color: 'var(--blue)',    bg: 'var(--blue-muted)' },
+  in_progress: { label: 'Em Atendimento', color: 'var(--purple)',  bg: 'rgba(139,92,246,0.12)' },
+  completed:   { label: 'Concluido',      color: 'var(--green)',   bg: 'var(--green-muted)' },
+  canceled:    { label: 'Cancelado',      color: 'var(--red)',     bg: 'var(--red-muted)' },
 };
 
-const PRIORITY_LABEL: Record<string, { label: string; color: string }> = {
-  low:       { label: 'Baixa',     color: '#94a3b8' },
-  medium:    { label: 'Média',     color: '#f59e0b' },
-  high:      { label: 'Alta',      color: '#f97316' },
-  emergency: { label: 'Emergência', color: '#ef4444' },
+const PRIORITY_MAP: Record<string, { label: string; color: string }> = {
+  low:       { label: 'Baixa',      color: 'var(--text-muted)' },
+  medium:    { label: 'Media',      color: 'var(--yellow)' },
+  high:      { label: 'Alta',       color: 'var(--orange)' },
+  emergency: { label: 'Emergencia', color: 'var(--red)' },
 };
 
 const defaultForm = {
@@ -34,11 +35,21 @@ function maskCep(v: string) {
   return v.replace(/\D/g, '').replace(/^(\d{5})(\d)/, '$1-$2').slice(0, 9);
 }
 
+function Field({ label, value, onChange, placeholder, type = 'text', required = false }: any) {
+  return (
+    <div>
+      <label className="label">{label}{required && <span style={{ color: 'var(--red)', marginLeft: 3 }}>*</span>}</label>
+      <input type={type} className="input" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
+    </div>
+  );
+}
+
 export default function ServiceOrdersPage() {
   const qc = useQueryClient();
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState(defaultForm);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [cep, setCep] = useState('');
   const [cepStatus, setCepStatus] = useState<'idle' | 'loading' | 'found' | 'error'>('idle');
@@ -60,12 +71,7 @@ export default function ServiceOrdersPage() {
     mutationFn: (data: any) => api.post('/service-orders', data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['service-orders'] });
-      setModal(false);
-      setForm(defaultForm);
-      setCep('');
-      setNumero('');
-      setCepStatus('idle');
-      setError('');
+      closeModal();
     },
     onError: (e: any) => setError(e.response?.data?.message ?? 'Erro ao criar OS'),
   });
@@ -75,6 +81,11 @@ export default function ServiceOrdersPage() {
       api.patch(`/service-orders/${id}/status`, { status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['service-orders'] }),
   });
+
+  function closeModal() {
+    setModal(false); setForm(defaultForm);
+    setCep(''); setNumero(''); setCepStatus('idle'); setError('');
+  }
 
   async function handleCep(raw: string) {
     const masked = maskCep(raw);
@@ -88,32 +99,24 @@ export default function ServiceOrdersPage() {
       if (data.erro) { setCepStatus('error'); return; }
       const base = `${data.logradouro}, ${data.bairro}, ${data.localidade} - ${data.uf}`;
       const query = `${data.bairro}, ${data.localidade}, ${data.uf}, Brasil`;
-      const geo = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
-        { headers: { 'Accept-Language': 'pt-BR' } }
-      );
+      const geo = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`, { headers: { 'Accept-Language': 'pt-BR' } });
       const geoData = await geo.json();
-      const lat = geoData[0]?.lat ?? '';
-      const lng = geoData[0]?.lon ?? '';
-      setForm(f => ({ ...f, lat: String(lat), lng: String(lng), address: base }));
+      setForm(f => ({ ...f, lat: String(geoData[0]?.lat ?? ''), lng: String(geoData[0]?.lon ?? ''), address: base }));
       setCepStatus('found');
-    } catch {
-      setCepStatus('error');
-    }
+    } catch { setCepStatus('error'); }
   }
 
   function buildAddress() {
     if (!form.address) return '';
     if (!numero) return form.address;
     const parts = form.address.split(',');
-    parts[0] = parts[0].trim();
-    return `${parts[0]}, ${numero}${parts.slice(1).join(',')}`;
+    return `${parts[0].trim()}, ${numero}${parts.slice(1).join(',')}`;
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.clientName || !form.clientPhone || !form.address || !form.lat || !form.lng || !form.timeWindowStart || !form.timeWindowEnd) {
-      setError('Preencha todos os campos obrigatórios (incluindo endereço via CEP)');
+      setError('Preencha todos os campos obrigatorios, incluindo o CEP');
       return;
     }
     create.mutate({
@@ -122,109 +125,138 @@ export default function ServiceOrdersPage() {
       lat: parseFloat(form.lat),
       lng: parseFloat(form.lng),
       estimatedDurationMinutes: parseInt(form.estimatedDurationMinutes),
+      clientEmail: form.clientEmail || undefined,
       technicianId: form.technicianId || undefined,
     });
   }
 
-  const filtered = filterStatus === 'all' ? orders : orders.filter((o: any) => o.status === filterStatus);
+  const filtered = useMemo(() => orders.filter((o: any) => {
+    const matchStatus = filterStatus === 'all' || o.status === filterStatus;
+    const matchSearch = !search || o.clientName?.toLowerCase().includes(search.toLowerCase()) || o.address?.toLowerCase().includes(search.toLowerCase());
+    return matchStatus && matchSearch;
+  }), [orders, filterStatus, search]);
 
   return (
-    <div style={{ padding: 32 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+    <div className="page-container">
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#fff', margin: 0 }}>Ordens de Serviço</h1>
-          <p style={{ color: '#94a3b8', fontSize: 14, margin: '4px 0 0' }}>
-            {format(new Date(), "EEEE, dd 'de' MMMM", { locale: ptBR })}
-          </p>
+          <h1 className="page-title">Ordens de Servico</h1>
+          <p className="page-subtitle">{format(new Date(), "EEEE, dd 'de' MMMM", { locale: ptBR })} · {orders.length} OS hoje</p>
         </div>
-        <button onClick={() => setModal(true)} style={{
-          background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8,
-          padding: '10px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer',
-        }}>
-          + Nova OS
+        <button className="btn-primary" onClick={() => setModal(true)}>
+          <Plus size={16} /> Nova OS
         </button>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-        {Object.entries(STATUS_LABEL).map(([key, s]) => {
-          const count = orders.filter((o: any) => o.status === key).length;
+      {/* Status pills */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+        <button onClick={() => setFilterStatus('all')} className={filterStatus === 'all' ? 'btn-primary' : 'btn-secondary'}
+          style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600 }}>
+          Todas ({orders.length})
+        </button>
+        {Object.entries(STATUS_MAP).map(([key, { label, color, bg }]) => {
+          const cnt = orders.filter((o: any) => o.status === key).length;
+          if (cnt === 0 && filterStatus !== key) return null;
           return (
-            <div key={key} onClick={() => setFilterStatus(filterStatus === key ? 'all' : key)}
+            <button key={key} onClick={() => setFilterStatus(filterStatus === key ? 'all' : key)}
               style={{
-                background: filterStatus === key ? s.color + '20' : '#1e293b',
-                border: `1px solid ${filterStatus === key ? s.color : '#334155'}`,
-                borderRadius: 12, padding: '12px 20px', cursor: 'pointer', minWidth: 100,
+                padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 99, cursor: 'pointer',
+                background: filterStatus === key ? bg : 'var(--bg-hover)',
+                border: '1px solid ' + (filterStatus === key ? color + '40' : 'var(--border-default)'),
+                color: filterStatus === key ? color : 'var(--text-secondary)',
+                transition: 'all .12s',
               }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{count}</div>
-              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{s.label}</div>
-            </div>
+              {label} {cnt > 0 && `(${cnt})`}
+            </button>
           );
         })}
       </div>
 
+      {/* Search */}
+      <div style={{ marginBottom: 14 }}>
+        <div className="search-wrapper" style={{ maxWidth: 360 }}>
+          <Search size={15} className="search-icon" />
+          <input className="input" placeholder="Buscar por cliente ou endereco..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: 36 }} />
+        </div>
+      </div>
+
       {/* Table */}
-      <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 12, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="table-wrapper animate-fadeUp stagger-2">
+        <table>
           <thead>
-            <tr style={{ borderBottom: '1px solid #334155' }}>
-              {['#', 'Cliente', 'Endereço', 'Técnico', 'Prioridade', 'Status', 'Horário', 'Ações'].map(h => (
-                <th key={h} style={{
-                  textAlign: 'left', padding: '12px 16px', fontSize: 11,
-                  fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1,
-                }}>{h}</th>
-              ))}
+            <tr>
+              <th>#</th>
+              <th>Cliente</th>
+              <th>Endereco</th>
+              <th>Tecnico</th>
+              <th>Prioridade</th>
+              <th>Status</th>
+              <th>Janela</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={8} style={{ padding: 40, textAlign: 'center', color: '#475569' }}>Carregando...</td></tr>
+              [1,2,3,4].map(i => (
+                <tr key={i}>{[1,2,3,4,5,6,7,8].map(j => <td key={j}><div className="skeleton" style={{ height: 14, width: j===1?30:j===2?140:90, borderRadius: 4 }} /></td>)}</tr>
+              ))
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 48, textAlign: 'center', color: '#475569', fontSize: 15 }}>
-                Nenhuma OS para hoje. Clique em "Nova OS" para criar.
+              <tr><td colSpan={8}>
+                <div className="empty-state">
+                  <AlertTriangle size={36} color="var(--text-muted)" />
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>Nenhuma OS encontrada</div>
+                  <div style={{ fontSize: 12 }}>Crie uma nova ordem de servico para comecar</div>
+                </div>
               </td></tr>
             ) : filtered.map((os: any, i: number) => {
-              const st = STATUS_LABEL[os.status] ?? STATUS_LABEL.pending;
-              const pr = PRIORITY_LABEL[os.priority] ?? PRIORITY_LABEL.medium;
+              const st = STATUS_MAP[os.status] ?? STATUS_MAP.pending;
+              const pr = PRIORITY_MAP[os.priority] ?? PRIORITY_MAP.medium;
               return (
-                <tr key={os.id} style={{ borderBottom: '1px solid #0f172a' }}>
-                  <td style={{ padding: '12px 16px', color: '#64748b', fontSize: 13 }}>
-                    {os.sequenceOrder ?? i + 1}
+                <tr key={os.id}>
+                  <td style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 600 }}>#{os.sequenceOrder ?? i + 1}</td>
+                  <td>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{os.clientName}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{os.clientPhone}</div>
                   </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14 }}>{os.clientName}</div>
-                    <div style={{ color: '#64748b', fontSize: 12 }}>{os.clientPhone}</div>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5, maxWidth: 200 }}>
+                      <MapPin size={12} color="var(--text-muted)" style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{os.address}</span>
+                    </div>
                   </td>
-                  <td style={{ padding: '12px 16px', color: '#94a3b8', fontSize: 13, maxWidth: 200 }}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{os.address}</div>
+                  <td style={{ fontSize: 13 }}>
+                    {os.technician?.name
+                      ? <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'linear-gradient(135deg,#6366F1,#8B5CF6)', display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'#fff',flexShrink:0 }}>
+                            {os.technician.name[0].toUpperCase()}
+                          </div>
+                          <span style={{ color: 'var(--text-secondary)' }}>{os.technician.name}</span>
+                        </div>
+                      : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Nao atribuido</span>}
                   </td>
-                  <td style={{ padding: '12px 16px', color: '#94a3b8', fontSize: 13 }}>
-                    {os.technician?.name ?? <span style={{ color: '#ef4444' }}>Não atribuído</span>}
+                  <td>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: pr.color }}>{pr.label}</span>
                   </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <span style={{
-                      background: pr.color + '20', color: pr.color,
-                      padding: '3px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    }}>{pr.label}</span>
+                  <td>
+                    <span className="badge" style={{ background: st.bg, color: st.color, border: '1px solid ' + st.color + '30' }}>
+                      <span className="badge-dot" style={{ background: st.color }} />
+                      {st.label}
+                    </span>
                   </td>
-                  <td style={{ padding: '12px 16px' }}>
-                    <span style={{
-                      background: st.color + '20', color: st.color,
-                      padding: '3px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                    }}>{st.label}</span>
+                  <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Clock size={11} color="var(--text-muted)" />
+                      {new Date(os.timeWindowStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      {' – '}
+                      {new Date(os.timeWindowEnd).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
                   </td>
-                  <td style={{ padding: '12px 16px', color: '#94a3b8', fontSize: 12 }}>
-                    {new Date(os.timeWindowStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                    {' – '}
-                    {new Date(os.timeWindowEnd).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>
+                  <td>
                     {os.status === 'pending' && (
-                      <button
-                        onClick={() => updateStatus.mutate({ id: os.id, status: 'canceled' })}
-                        style={{ background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}
-                      >Cancelar</button>
+                      <button className="btn-danger-ghost" style={{ fontSize: 11, padding: '5px 10px' }}
+                        onClick={() => updateStatus.mutate({ id: os.id, status: 'canceled' })}>
+                        <XCircle size={12} /> Cancelar
+                      </button>
                     )}
                   </td>
                 </tr>
@@ -236,69 +268,55 @@ export default function ServiceOrdersPage() {
 
       {/* Modal */}
       {modal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
-        }}>
-          <div style={{
-            background: '#1e293b', border: '1px solid #334155', borderRadius: 16,
-            padding: 32, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: '#fff', margin: 0 }}>Nova Ordem de Serviço</h2>
-              <button onClick={() => { setModal(false); setError(''); setCep(''); setNumero(''); setCepStatus('idle'); }} style={{
-                background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer',
-              }}>✕</button>
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) closeModal(); }}>
+          <div className="modal-content" style={{ maxWidth: 560 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
+              <div>
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.2px' }}>Nova Ordem de Servico</h2>
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>Preencha os dados para criar uma demanda</p>
+              </div>
+              <button className="btn-ghost" onClick={closeModal} style={{ padding: 8 }}><X size={18} /></button>
             </div>
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <SectionTitle>Cliente</SectionTitle>
-              <Row2>
-                <Field label="Nome do Cliente *" value={form.clientName} onChange={v => setForm(f => ({ ...f, clientName: v }))} placeholder="Maria Silva" />
-                <Field label="Telefone *" value={form.clientPhone} onChange={v => setForm(f => ({ ...f, clientPhone: v }))} placeholder="+55 48 99999-0000" />
-              </Row2>
-              <Field label="E-mail" value={form.clientEmail} onChange={v => setForm(f => ({ ...f, clientEmail: v }))} placeholder="cliente@email.com" />
+              <div className="section-title">Dados do Cliente</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field label="Nome do Cliente" required value={form.clientName} onChange={(v: string) => setForm(f => ({ ...f, clientName: v }))} placeholder="Maria Silva" />
+                <Field label="Telefone" required value={form.clientPhone} onChange={(v: string) => setForm(f => ({ ...f, clientPhone: v }))} placeholder="+55 48 99999-0000" />
+              </div>
+              <Field label="E-mail" value={form.clientEmail} onChange={(v: string) => setForm(f => ({ ...f, clientEmail: v }))} placeholder="cliente@email.com" />
 
-              <SectionTitle>Localização</SectionTitle>
-
-              <Row2>
+              <div className="section-title" style={{ marginTop: 4 }}>Localizacao</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#cbd5e1', marginBottom: 6 }}>CEP *</label>
-                  <input
-                    value={cep}
-                    onChange={e => handleCep(e.target.value)}
-                    placeholder="00000-000"
-                    maxLength={9}
-                    style={{ width: '100%', background: '#334155', border: `1px solid ${cepStatus === 'error' ? '#ef4444' : cepStatus === 'found' ? '#22c55e' : '#475569'}`, borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 14, boxSizing: 'border-box' as any }}
-                  />
-                  {cepStatus === 'loading' && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Buscando CEP...</div>}
-                  {cepStatus === 'error' && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4 }}>CEP não encontrado</div>}
+                  <label className="label">CEP <span style={{ color: 'var(--red)' }}>*</span></label>
+                  <input className="input" value={cep} onChange={e => handleCep(e.target.value)} placeholder="00000-000" maxLength={9}
+                    style={{ borderColor: cepStatus === 'error' ? 'var(--red)' : cepStatus === 'found' ? 'var(--green)' : undefined }} />
+                  {cepStatus === 'loading' && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Buscando...</div>}
+                  {cepStatus === 'error' && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>CEP nao encontrado</div>}
                 </div>
-                <Field label="Número / Complemento" value={numero} onChange={setNumero} placeholder="87, Apto 2" />
-              </Row2>
+                <Field label="Numero / Complemento" value={numero} onChange={setNumero} placeholder="87, Apto 2" />
+              </div>
 
               {cepStatus === 'found' && form.address && (
-                <div style={{
-                  background: '#0f2a1a', border: '1px solid #16a34a40', borderRadius: 8,
-                  padding: '10px 14px',
-                }}>
-                  <div style={{ fontSize: 13, color: '#4ade80', fontWeight: 600, marginBottom: 2 }}>✓ Endereço encontrado</div>
-                  <div style={{ fontSize: 12, color: '#86efac' }}>{buildAddress() || form.address}</div>
-                  <div style={{ fontSize: 11, color: '#4ade8080', marginTop: 2, fontFamily: 'monospace' }}>
-                    {parseFloat(form.lat).toFixed(5)}, {parseFloat(form.lng).toFixed(5)}
+                <div className="alert-success">
+                  <MapPin size={14} style={{ flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 1 }}>{buildAddress() || form.address}</div>
+                    <div style={{ fontSize: 11, opacity: 0.8, fontFamily: 'monospace' }}>{parseFloat(form.lat).toFixed(5)}, {parseFloat(form.lng).toFixed(5)}</div>
                   </div>
                 </div>
               )}
 
-              <SectionTitle>Agendamento</SectionTitle>
-              <Row2>
-                <Field label="Início da janela *" value={form.timeWindowStart} onChange={v => setForm(f => ({ ...f, timeWindowStart: v }))} type="datetime-local" />
-                <Field label="Fim da janela *" value={form.timeWindowEnd} onChange={v => setForm(f => ({ ...f, timeWindowEnd: v }))} type="datetime-local" />
-              </Row2>
-              <Row2>
+              <div className="section-title" style={{ marginTop: 4 }}>Agendamento</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field label="Inicio" required value={form.timeWindowStart} onChange={(v: string) => setForm(f => ({ ...f, timeWindowStart: v }))} type="datetime-local" />
+                <Field label="Fim" required value={form.timeWindowEnd} onChange={(v: string) => setForm(f => ({ ...f, timeWindowEnd: v }))} type="datetime-local" />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#cbd5e1', marginBottom: 6 }}>Duração Estimada</label>
-                  <select value={form.estimatedDurationMinutes} onChange={e => setForm(f => ({ ...f, estimatedDurationMinutes: e.target.value }))} style={selectStyle}>
+                  <label className="label">Duracao Estimada</label>
+                  <select className="input" value={form.estimatedDurationMinutes} onChange={e => setForm(f => ({ ...f, estimatedDurationMinutes: e.target.value }))}>
                     <option value="30">30 min</option>
                     <option value="60">1 hora</option>
                     <option value="90">1h 30min</option>
@@ -308,78 +326,45 @@ export default function ServiceOrdersPage() {
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#cbd5e1', marginBottom: 6 }}>Prioridade</label>
-                  <select value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))} style={selectStyle}>
-                    <option value="low">🔵 Baixa</option>
-                    <option value="medium">🟡 Média</option>
-                    <option value="high">🟠 Alta</option>
-                    <option value="emergency">🔴 Emergência</option>
+                  <label className="label">Prioridade</label>
+                  <select className="input" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
+                    <option value="low">Baixa</option>
+                    <option value="medium">Media</option>
+                    <option value="high">Alta</option>
+                    <option value="emergency">Emergencia</option>
                   </select>
                 </div>
-              </Row2>
+              </div>
 
-              <SectionTitle>Atribuição</SectionTitle>
+              <div className="section-title" style={{ marginTop: 4 }}>Atribuicao</div>
               <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#cbd5e1', marginBottom: 6 }}>Técnico Responsável</label>
-                <select value={form.technicianId} onChange={e => setForm(f => ({ ...f, technicianId: e.target.value }))} style={selectStyle}>
-                  <option value="">Sem atribuição (redespacho automático)</option>
+                <label className="label">Tecnico Responsavel</label>
+                <select className="input" value={form.technicianId} onChange={e => setForm(f => ({ ...f, technicianId: e.target.value }))}>
+                  <option value="">Sem atribuicao (redespacho automatico)</option>
                   {technicians.map((t: any) => (
                     <option key={t.id} value={t.id}>{t.name} — {t.vehicleType}</option>
                   ))}
                 </select>
               </div>
-              <Field label="Tipo de Serviço" value={form.serviceType} onChange={v => setForm(f => ({ ...f, serviceType: v }))} placeholder="Ex: Instalação de fibra, Manutenção AC..." />
+              <Field label="Tipo de Servico" value={form.serviceType} onChange={(v: string) => setForm(f => ({ ...f, serviceType: v }))} placeholder="Ex: Instalacao de fibra, Manutencao AC..." />
               <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#cbd5e1', marginBottom: 6 }}>Observações</label>
-                <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Informações adicionais para o técnico..."
-                  rows={3}
-                  style={{ ...selectStyle, resize: 'vertical' as any }}
-                />
+                <label className="label">Observacoes</label>
+                <textarea className="input" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  placeholder="Informacoes adicionais para o tecnico..." rows={3} style={{ resize: 'vertical' as any }} />
               </div>
 
-              {error && <div style={{ background: '#ef444420', border: '1px solid #ef444440', color: '#f87171', padding: '10px 12px', borderRadius: 8, fontSize: 13 }}>{error}</div>}
+              {error && <div className="alert-error"><AlertTriangle size={14} style={{ flexShrink: 0 }} />{error}</div>}
 
-              <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                <button type="button" onClick={() => { setModal(false); setError(''); setCep(''); setNumero(''); setCepStatus('idle'); }} style={{
-                  flex: 1, padding: '12px', background: '#334155', border: 'none',
-                  borderRadius: 8, color: '#94a3b8', fontSize: 14, cursor: 'pointer',
-                }}>Cancelar</button>
-                <button type="submit" disabled={create.isPending} style={{
-                  flex: 2, padding: '12px', background: '#2563eb', border: 'none',
-                  borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer',
-                }}>{create.isPending ? 'Criando...' : 'Criar Ordem de Serviço'}</button>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={closeModal}>Cancelar</button>
+                <button type="submit" className="btn-primary" style={{ flex: 2, justifyContent: 'center' }} disabled={create.isPending}>
+                  {create.isPending ? 'Criando...' : <><Plus size={15} /> Criar Ordem de Servico</>}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-const selectStyle = {
-  width: '100%', background: '#334155', border: '1px solid #475569',
-  borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 14, boxSizing: 'border-box' as any,
-};
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase' as any, letterSpacing: 1, marginTop: 4 }}>{children}</div>;
-}
-
-function Row2({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>{children}</div>;
-}
-
-function Field({ label, value, onChange, placeholder, type = 'text' }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
-}) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#cbd5e1', marginBottom: 6 }}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: '100%', background: '#334155', border: '1px solid #475569', borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 14, boxSizing: 'border-box' as any }}
-      />
     </div>
   );
 }

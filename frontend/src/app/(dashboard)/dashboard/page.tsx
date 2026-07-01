@@ -1,148 +1,193 @@
-'use client';
-import { useEffect, useState, useMemo } from 'react';
-import dynamic from 'next/dynamic';
+﻿'use client';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import TechnicianTable from '@/components/Dashboard/TechnicianTable';
-import { useRealtimeLocation } from '@/hooks/useRealtimeLocation';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import dynamic from 'next/dynamic';
+import { ClipboardList, Users, CheckCircle2, Clock, AlertTriangle, RefreshCw, Wifi } from 'lucide-react';
 
-const TechnicianMap = dynamic(() => import('@/components/Map/TechnicianMap'), {
-  ssr: false,
-  loading: () => <div className="w-full h-full bg-surface-100 animate-pulse rounded-xl" />,
-});
+const TechnicianMap = dynamic(() => import('@/components/Map/TechnicianMap'), { ssr: false, loading: () => (
+  <div style={{ height: '100%', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <RefreshCw size={20} color="var(--text-muted)" className="animate-spin" />
+  </div>
+) });
+
+function useCountUp(target: number, duration = 900) {
+  const [val, setVal] = useState(0);
+  const prev = useRef(0);
+  useEffect(() => {
+    const start = prev.current;
+    const diff = target - start;
+    if (diff === 0) return;
+    const t0 = performance.now();
+    const frame = (t: number) => {
+      const p = Math.min((t - t0) / duration, 1);
+      const ease = 1 - Math.pow(1 - p, 3);
+      setVal(Math.round(start + diff * ease));
+      if (p < 1) requestAnimationFrame(frame);
+      else { prev.current = target; }
+    };
+    requestAnimationFrame(frame);
+  }, [target, duration]);
+  return val;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: 'var(--yellow)', routed: 'var(--blue)', in_transit: 'var(--blue)',
+  in_progress: 'var(--purple)', completed: 'var(--green)', canceled: 'var(--red)',
+};
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Pendente', routed: 'Roteirizado', in_transit: 'Em Trânsito',
+  in_progress: 'Em Atendimento', completed: 'Concluído', canceled: 'Cancelado',
+};
+const TECH_STATUS: Record<string, { label: string; color: string; pulse: boolean }> = {
+  online:     { label: 'Disponível',      color: 'var(--green)',  pulse: true },
+  in_transit: { label: 'Em Trânsito',    color: 'var(--blue)',   pulse: true },
+  busy:       { label: 'Ocupado',        color: 'var(--purple)', pulse: false },
+  offline:    { label: 'Offline',        color: 'var(--text-muted)', pulse: false },
+};
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<any>(null);
-  const companyId = user?.company?.id ?? '';
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('fsm_user');
-      if (stored) setUser(JSON.parse(stored));
-    } catch {}
-  }, []);
   const today = format(new Date(), 'yyyy-MM-dd');
 
+  const { data: orders = [], refetch: refetchOrders } = useQuery({
+    queryKey: ['orders-today'],
+    queryFn: () => api.get(`/service-orders?date=${today}`).then(r => r.data),
+    refetchInterval: 20000,
+  });
   const { data: technicians = [] } = useQuery({
-    queryKey: ['technicians'],
-    queryFn: () => api.get('/technicians').then((r) => r.data),
-    refetchInterval: 30_000,
+    queryKey: ['technicians-dash'],
+    queryFn: () => api.get('/technicians').then(r => r.data),
+    refetchInterval: 15000,
   });
 
-  const { data: orders = [] } = useQuery({
-    queryKey: ['service-orders', today],
-    queryFn: () => api.get(`/service-orders?date=${today}`).then((r) => r.data),
-    refetchInterval: 15_000,
-  });
+  const totalOS = useCountUp(orders.length);
+  const pendingOS = useCountUp(orders.filter((o: any) => o.status === 'pending').length);
+  const doneOS = useCountUp(orders.filter((o: any) => o.status === 'completed').length);
+  const onlineTech = useCountUp(technicians.filter((t: any) => t.status !== 'offline').length);
 
-  const realtimeLocations = useRealtimeLocation(companyId);
+  const stats = [
+    { label: 'Total de OS', value: totalOS, icon: ClipboardList, color: 'var(--accent)', bg: 'var(--accent-muted)' },
+    { label: 'Pendentes', value: pendingOS, icon: Clock, color: 'var(--yellow)', bg: 'var(--yellow-muted)' },
+    { label: 'Concluídas', value: doneOS, icon: CheckCircle2, color: 'var(--green)', bg: 'var(--green-muted)' },
+    { label: 'Técnicos Online', value: onlineTech, icon: Wifi, color: 'var(--blue)', bg: 'var(--blue-muted)' },
+  ];
 
-  const techMarkersForMap = useMemo(() => {
-    return technicians.map((t: any) => {
-      const rt = realtimeLocations.get(t.id);
-      return {
-        id: t.id,
-        name: t.name,
-        lat: rt?.lat ?? 0,
-        lng: rt?.lng ?? 0,
-        status: t.status,
-        heading: rt?.heading,
-      };
-    }).filter((t: any) => t.lat !== 0);
-  }, [technicians, realtimeLocations]);
-
-  const osMarkersForMap = useMemo(() => {
-    return orders
-      .filter((o: any) => o.coordinates)
-      .map((o: any) => ({
-        id: o.id,
-        lat: o.lat ?? 0,
-        lng: o.lng ?? 0,
-        clientName: o.clientName,
-        status: o.status,
-        priority: o.priority,
-      }));
-  }, [orders]);
-
-  const stats = useMemo(() => ({
-    online: technicians.filter((t: any) => t.status !== 'offline').length,
-    total: technicians.length,
-    pending: orders.filter((o: any) => o.status === 'pending').length,
-    completed: orders.filter((o: any) => o.status === 'completed').length,
-    emergency: orders.filter((o: any) => o.priority === 'emergency' && o.status !== 'completed').length,
-  }), [technicians, orders]);
+  const recentOrders = [...orders].slice(-6).reverse();
 
   return (
-    <div className="flex flex-col h-screen bg-surface overflow-hidden">
+    <div className="page-container">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-surface-200 shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-bold text-white">FSM</span>
-          <span className="text-slate-500 text-sm">•</span>
-          <span className="text-slate-400 text-sm">
-            {format(new Date(), "EEEE, dd 'de' MMMM", { locale: ptBR })}
-          </span>
+      <div className="page-header">
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <div className="live-dot" />
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: 1 }}>Ao Vivo</span>
+          </div>
+          <h1 className="page-title">Painel de Controle</h1>
+          <p className="page-subtitle">{format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}</p>
         </div>
-        <div className="flex items-center gap-4">
-          {stats.emergency > 0 && (
-            <span className="badge bg-red-500/20 text-red-400 animate-pulse">
-              {stats.emergency} emergência{stats.emergency > 1 ? 's' : ''}
-            </span>
-          )}
-          <span className="text-slate-400 text-sm">{user?.name}</span>
-        </div>
-      </header>
+        <button onClick={() => refetchOrders()} className="btn-secondary" style={{ gap: 6 }}>
+          <RefreshCw size={14} /> Atualizar
+        </button>
+      </div>
 
-      {/* Stats bar */}
-      <div className="flex gap-4 px-6 py-3 border-b border-surface-200 shrink-0">
-        {[
-          { label: 'Técnicos Online', value: `${stats.online}/${stats.total}`, color: 'text-green-400' },
-          { label: 'OSs Pendentes',   value: stats.pending,  color: 'text-amber-400' },
-          { label: 'Concluídas Hoje', value: stats.completed, color: 'text-blue-400' },
-          { label: 'Total Hoje',      value: orders.length,   color: 'text-slate-300' },
-        ].map((s) => (
-          <div key={s.label} className="flex items-center gap-2">
-            <span className={`text-xl font-bold font-mono ${s.color}`}>{s.value}</span>
-            <span className="text-slate-500 text-xs">{s.label}</span>
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
+        {stats.map(({ label, value, icon: Icon, color, bg }, i) => (
+          <div key={label} className={`stat-card animate-fadeUp stagger-${i + 1}`}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon size={18} color={color} />
+              </div>
+            </div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-1px', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, fontWeight: 500 }}>{label}</div>
           </div>
         ))}
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 overflow-hidden gap-4 p-4">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, minHeight: 540 }}>
         {/* Map */}
-        <div className="flex-1 min-h-0">
-          <TechnicianMap technicians={techMarkersForMap} serviceOrders={osMarkersForMap} />
+        <div className="glass animate-fadeUp stagger-3" style={{ overflow: 'hidden', minHeight: 480 }}>
+          <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="live-dot" />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Mapa em Tempo Real</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>{technicians.length} técnicos</span>
+          </div>
+          <div style={{ height: 'calc(100% - 50px)', minHeight: 430 }}>
+            <TechnicianMap technicians={technicians} serviceOrders={orders} />
+          </div>
         </div>
 
-        {/* Side panel */}
-        <div className="w-80 shrink-0 flex flex-col gap-4 overflow-y-auto">
-          <TechnicianTable technicians={technicians} />
-
-          <div className="card p-0 overflow-hidden">
-            <div className="px-4 py-3 border-b border-surface-200 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-200">OSs de Hoje</h2>
-              <span className="text-xs text-slate-500">{orders.length} total</span>
+        {/* Right panel */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Technicians */}
+          <div className="glass animate-fadeUp stagger-4" style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Técnicos</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{technicians.filter((t: any) => t.status !== 'offline').length} ativos</span>
             </div>
-            <div className="divide-y divide-surface-200/50 max-h-96 overflow-y-auto">
-              {orders.slice(0, 30).map((o: any) => (
-                <div key={o.id} className="px-4 py-3 hover:bg-surface-100/50 transition-colors">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium text-slate-200 truncate">{o.clientName}</p>
-                    <span className={`badge shrink-0 text-xs ${
-                      o.priority === 'emergency' ? 'bg-red-500/20 text-red-400' :
-                      o.priority === 'high'      ? 'bg-orange-500/20 text-orange-400' :
-                      'bg-surface-200 text-slate-400'
-                    }`}>{o.priority}</span>
-                  </div>
-                  <p className="text-xs text-slate-500 truncate mt-0.5">{o.address}</p>
-                  <p className="text-xs text-slate-600 mt-1">
-                    {o.technician?.name ?? 'Não atribuído'} · {o.status}
-                  </p>
+            <div style={{ padding: 8, maxHeight: 220, overflowY: 'auto' }}>
+              {technicians.length === 0 ? (
+                <div className="empty-state" style={{ padding: 24 }}>
+                  <Users size={28} color="var(--text-muted)" />
+                  <span style={{ fontSize: 13 }}>Nenhum técnico</span>
                 </div>
-              ))}
+              ) : technicians.map((t: any) => {
+                const s = TECH_STATUS[t.status] ?? TECH_STATUS.offline;
+                return (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, transition: 'background .1s' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    <div style={{
+                      width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                      background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 11, fontWeight: 700, color: '#fff',
+                    }}>{t.name?.[0]?.toUpperCase() ?? '?'}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{t.vehicleType}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: s.color, animation: s.pulse ? 'pulse-dot 1.8s ease infinite' : 'none', flexShrink: 0 }} />
+                      <span style={{ fontSize: 10, color: s.color, fontWeight: 600 }}>{s.label}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Recent OS */}
+          <div className="glass animate-fadeUp stagger-5" style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>OS Recentes</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>hoje</span>
+            </div>
+            <div style={{ padding: 8, maxHeight: 220, overflowY: 'auto' }}>
+              {recentOrders.length === 0 ? (
+                <div className="empty-state" style={{ padding: 24 }}>
+                  <ClipboardList size={28} color="var(--text-muted)" />
+                  <span style={{ fontSize: 13 }}>Nenhuma OS hoje</span>
+                </div>
+              ) : recentOrders.map((os: any) => {
+                const color = STATUS_COLORS[os.status] ?? 'var(--text-muted)';
+                return (
+                  <div key={os.id} style={{ padding: '8px 10px', borderRadius: 8, transition: 'background .1s', cursor: 'default' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{os.clientName}</span>
+                      <span style={{ fontSize: 10, color, fontWeight: 600, flexShrink: 0 }}>{STATUS_LABELS[os.status] ?? os.status}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{os.address}</div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
